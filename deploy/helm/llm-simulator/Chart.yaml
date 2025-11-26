@@ -1,0 +1,34 @@
+apiVersion: v2
+name: llm-simulator
+description: Enterprise-grade LLM API simulator for testing and development
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+
+keywords:
+  - llm
+  - simulator
+  - testing
+  - openai
+  - anthropic
+  - devops
+
+home: https://github.com/llm-devops/llm-simulator
+sources:
+  - https://github.com/llm-devops/llm-simulator
+
+maintainers:
+  - name: LLM DevOps Team
+    email: platform@llm-devops.com
+    url: https://llm-devops.com
+
+icon: https://llm-devops.com/assets/simulator-icon.svg
+
+annotations:
+  category: Development Tools
+  licenses: LLM-Dev-Ops-PSL-1.0
+
+dependencies: []
+
+# Kubernetes version compatibility
+kubeVersion: ">=1.24.0-0"

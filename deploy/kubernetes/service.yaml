@@ -1,0 +1,138 @@
+---
+# ==============================================================================
+# LLM-Simulator Service - ClusterIP
+# ==============================================================================
+# Internal service for cluster access
+# ==============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-simulator
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+    component: simulation-engine
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app: llm-simulator
+    component: simulation-engine
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+
+---
+# ==============================================================================
+# LLM-Simulator Service - Headless (for StatefulSet)
+# ==============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-simulator-headless
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+    component: simulation-engine
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: llm-simulator
+    component: simulation-engine
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP
+
+---
+# ==============================================================================
+# LLM-Simulator Service - LoadBalancer (Production External Access)
+# ==============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-simulator-external
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+    component: simulation-engine
+  annotations:
+    # AWS specific
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    # Azure specific
+    service.beta.kubernetes.io/azure-load-balancer-health-probe-interval: "5"
+    # GCP specific
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  type: LoadBalancer
+  selector:
+    app: llm-simulator
+    component: simulation-engine
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+    - name: https
+      port: 443
+      targetPort: http
+      protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+  loadBalancerSourceRanges:
+    - 0.0.0.0/0  # Restrict in production
+
+---
+# ==============================================================================
+# LLM-Simulator Service - NodePort (Development/Testing)
+# ==============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-simulator-nodeport
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+    component: simulation-engine
+    environment: development
+spec:
+  type: NodePort
+  selector:
+    app: llm-simulator
+    component: simulation-engine
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: 30080
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      nodePort: 30090
+      protocol: TCP

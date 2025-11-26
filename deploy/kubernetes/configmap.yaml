@@ -1,0 +1,223 @@
+---
+# ==============================================================================
+# LLM-Simulator ConfigMap
+# ==============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-simulator-config
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+    component: configuration
+data:
+  log_level: "info"
+
+  simulator.yaml: |
+    version: "1.0"
+
+    server:
+      host: "0.0.0.0"
+      port: 8080
+      max_connections: 10000
+      request_timeout_secs: 300
+      keepalive_timeout_secs: 75
+
+      cors:
+        enabled: true
+        allowed_origins: ["*"]
+        allowed_methods: ["GET", "POST", "OPTIONS"]
+        allowed_headers: ["Content-Type", "Authorization"]
+        max_age_secs: 3600
+
+      rate_limit:
+        enabled: false
+        requests_per_second: 100
+        burst_capacity: 200
+
+      shutdown_timeout_secs: 30
+
+    simulation:
+      max_concurrent_sessions: 1000
+      session_timeout_secs: 3600
+      persist_sessions: false
+
+      concurrency:
+        worker_threads: 0
+        blocking_threads: 512
+        task_queue_size: 10000
+        backpressure: "reject"
+
+      limits:
+        max_body_size_mb: 10
+        max_response_size_mb: 100
+
+    telemetry:
+      enabled: true
+      service_name: "llm-simulator"
+
+      logging:
+        level: "info"
+        format: "json"
+        output: "stdout"
+        include_location: false
+        include_thread_id: false
+
+      metrics:
+        enabled: true
+        exporter: "prometheus"
+        endpoint: "/metrics"
+        interval_secs: 60
+
+        histogram_buckets:
+          - 0.001
+          - 0.005
+          - 0.01
+          - 0.025
+          - 0.05
+          - 0.1
+          - 0.25
+          - 0.5
+          - 1.0
+          - 2.5
+          - 5.0
+          - 10.0
+
+      tracing:
+        enabled: true
+        exporter: "otlp"
+        sampling_rate: 1.0
+        trace_id_strategy: "random"
+        propagation_format: "w3c"
+
+    features:
+      streaming: true
+      function_calling: false
+      vision: false
+      embeddings: false
+      fine_tuning: false
+      batch_processing: false
+      caching: false
+      prompt_caching: false
+
+---
+# ==============================================================================
+# LLM-Simulator Profiles ConfigMap
+# ==============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-simulator-profiles
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+    component: profiles
+data:
+  gpt-4-turbo.yaml: |
+    name: "GPT-4 Turbo"
+    provider: "openai"
+    model: "gpt-4-turbo"
+    enabled: true
+
+    latency:
+      ttft:
+        type: "log_normal"
+        p50_ms: 800.0
+        p99_ms: 2500.0
+
+      itl:
+        type: "normal"
+        mean_ms: 20.0
+        std_dev_ms: 5.0
+        min_clamp_ms: 0.0
+
+      network_jitter:
+        type: "normal"
+        mean_ms: 0.0
+        std_dev_ms: 2.0
+
+      degradation:
+        type: "exponential"
+        alpha: 0.5
+        baseline_qps: 10.0
+
+    errors:
+      enabled: false
+      base_rate: 0.0
+
+    response:
+      content_strategy: "random"
+      max_tokens: 4096
+      vocab_size: 50000
+      streaming_chunk_size: 1
+      include_usage: true
+
+    cost:
+      input_tokens_per_million: 10.0
+      output_tokens_per_million: 30.0
+      include_in_response: true
+
+  claude-3-opus.yaml: |
+    name: "Claude 3 Opus"
+    provider: "anthropic"
+    model: "claude-3-opus"
+    enabled: true
+
+    latency:
+      ttft:
+        type: "log_normal"
+        p50_ms: 1200.0
+        p99_ms: 3000.0
+
+      itl:
+        type: "normal"
+        mean_ms: 25.0
+        std_dev_ms: 6.0
+
+      degradation:
+        type: "mm_one"
+        service_rate: 8.0
+        baseline_qps: 5.0
+
+    response:
+      content_strategy: "random"
+      max_tokens: 4096
+
+    cost:
+      input_tokens_per_million: 15.0
+      output_tokens_per_million: 75.0
+      include_in_response: true
+
+  gpt-3.5-turbo.yaml: |
+    name: "GPT-3.5 Turbo"
+    provider: "openai"
+    model: "gpt-3.5-turbo"
+    enabled: true
+
+    latency:
+      ttft:
+        type: "bimodal"
+        fast_mean_ms: 100.0
+        fast_std_ms: 20.0
+        slow_mean_ms: 500.0
+        slow_std_ms: 100.0
+        fast_probability: 0.9
+
+      itl:
+        type: "normal"
+        mean_ms: 10.0
+        std_dev_ms: 3.0
+
+      degradation:
+        type: "linear"
+        slope: 0.3
+        baseline_qps: 50.0
+
+    response:
+      content_strategy: "random"
+      max_tokens: 4096
+
+    cost:
+      input_tokens_per_million: 0.5
+      output_tokens_per_million: 1.5
+      include_in_response: true

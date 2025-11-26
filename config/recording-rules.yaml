@@ -1,0 +1,346 @@
+# Prometheus Recording Rules
+# Version: 1.0
+# Purpose: Pre-compute expensive queries and aggregations
+
+groups:
+  # Request metrics recording rules
+  - name: llm_requests
+    interval: 15s
+    rules:
+      # Request rate (5-minute rolling average)
+      - record: llm:requests:rate5m
+        expr: |
+          sum(rate(llm_requests_total[5m]))
+
+      # Request rate by provider
+      - record: llm:requests:rate5m:by_provider
+        expr: |
+          sum(rate(llm_requests_total[5m])) by (provider)
+
+      # Request rate by model
+      - record: llm:requests:rate5m:by_model
+        expr: |
+          sum(rate(llm_requests_total[5m])) by (provider, model)
+
+      # Request rate by operation
+      - record: llm:requests:rate5m:by_operation
+        expr: |
+          sum(rate(llm_requests_total[5m])) by (operation)
+
+      # Success rate (overall)
+      - record: llm:requests:success_rate
+        expr: |
+          sum(rate(llm_requests_total{status="success"}[5m]))
+          /
+          sum(rate(llm_requests_total[5m]))
+
+      # Success rate by provider
+      - record: llm:requests:success_rate:by_provider
+        expr: |
+          sum(rate(llm_requests_total{status="success"}[5m])) by (provider)
+          /
+          sum(rate(llm_requests_total[5m])) by (provider)
+
+      # Error rate
+      - record: llm:requests:error_rate
+        expr: |
+          sum(rate(llm_requests_errors_total[5m]))
+          /
+          sum(rate(llm_requests_total[5m]))
+
+      # Error rate by provider
+      - record: llm:requests:error_rate:by_provider
+        expr: |
+          sum(rate(llm_requests_errors_total[5m])) by (provider)
+          /
+          sum(rate(llm_requests_total[5m])) by (provider)
+
+  # Latency metrics recording rules
+  - name: llm_latency
+    interval: 15s
+    rules:
+      # P50 latency
+      - record: llm:latency:p50
+        expr: |
+          histogram_quantile(0.50,
+            sum(rate(llm_requests_duration_bucket[5m])) by (le)
+          )
+
+      # P95 latency (overall)
+      - record: llm:latency:p95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(llm_requests_duration_bucket[5m])) by (le)
+          )
+
+      # P95 latency by provider
+      - record: llm:latency:p95:by_provider
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(llm_requests_duration_bucket[5m])) by (le, provider)
+          )
+
+      # P95 latency by model
+      - record: llm:latency:p95:by_model
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(llm_requests_duration_bucket[5m])) by (le, provider, model)
+          )
+
+      # P99 latency
+      - record: llm:latency:p99
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(llm_requests_duration_bucket[5m])) by (le)
+          )
+
+      # P99 latency by provider
+      - record: llm:latency:p99:by_provider
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(llm_requests_duration_bucket[5m])) by (le, provider)
+          )
+
+      # Average latency
+      - record: llm:latency:avg
+        expr: |
+          sum(rate(llm_requests_duration_sum[5m]))
+          /
+          sum(rate(llm_requests_duration_count[5m]))
+
+      # Average latency by provider
+      - record: llm:latency:avg:by_provider
+        expr: |
+          sum(rate(llm_requests_duration_sum[5m])) by (provider)
+          /
+          sum(rate(llm_requests_duration_count[5m])) by (provider)
+
+      # TTFT P95
+      - record: llm:ttft:p95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(llm_latency_ttft_bucket[5m])) by (le)
+          )
+
+      # TTFT P95 by provider
+      - record: llm:ttft:p95:by_provider
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(llm_latency_ttft_bucket[5m])) by (le, provider)
+          )
+
+  # Token metrics recording rules
+  - name: llm_tokens
+    interval: 15s
+    rules:
+      # Total token rate
+      - record: llm:tokens:rate5m
+        expr: |
+          sum(rate(llm_tokens_total[5m]))
+
+      # Token rate by type
+      - record: llm:tokens:rate5m:by_type
+        expr: |
+          sum(rate(llm_tokens_total[5m])) by (token_type)
+
+      # Token rate by provider
+      - record: llm:tokens:rate5m:by_provider
+        expr: |
+          sum(rate(llm_tokens_total[5m])) by (provider)
+
+      # Token rate by provider and type
+      - record: llm:tokens:rate5m:by_provider_type
+        expr: |
+          sum(rate(llm_tokens_total[5m])) by (provider, token_type)
+
+      # Average tokens per request
+      - record: llm:tokens:avg_per_request
+        expr: |
+          sum(rate(llm_tokens_per_request_sum[5m]))
+          /
+          sum(rate(llm_tokens_per_request_count[5m]))
+
+      # Average tokens per request by provider
+      - record: llm:tokens:avg_per_request:by_provider
+        expr: |
+          sum(rate(llm_tokens_per_request_sum[5m])) by (provider)
+          /
+          sum(rate(llm_tokens_per_request_count[5m])) by (provider)
+
+      # Prompt to completion ratio
+      - record: llm:tokens:prompt_completion_ratio
+        expr: |
+          sum(rate(llm_tokens_total{token_type="completion"}[5m]))
+          /
+          sum(rate(llm_tokens_total{token_type="prompt"}[5m]))
+
+  # Cost metrics recording rules
+  - name: llm_cost
+    interval: 1m
+    rules:
+      # Hourly cost rate
+      - record: llm:cost:hourly
+        expr: |
+          sum(rate(llm_cost_total[1h])) * 3600
+
+      # Hourly cost rate by provider
+      - record: llm:cost:hourly:by_provider
+        expr: |
+          sum(rate(llm_cost_total[1h])) by (provider) * 3600
+
+      # Daily cost estimate
+      - record: llm:cost:daily_estimate
+        expr: |
+          sum(rate(llm_cost_total[24h])) * 86400
+
+      # Average cost per request
+      - record: llm:cost:avg_per_request
+        expr: |
+          sum(rate(llm_cost_total[1h]))
+          /
+          sum(rate(llm_requests_total[1h]))
+
+      # Average cost per request by provider
+      - record: llm:cost:avg_per_request:by_provider
+        expr: |
+          sum(rate(llm_cost_total[1h])) by (provider)
+          /
+          sum(rate(llm_requests_total[1h])) by (provider)
+
+      # Cost per 1K tokens
+      - record: llm:cost:per_1k_tokens
+        expr: |
+          (sum(rate(llm_cost_total[1h])) * 1000)
+          /
+          sum(rate(llm_tokens_total[1h]))
+
+  # Cache metrics recording rules
+  - name: llm_cache
+    interval: 15s
+    rules:
+      # Cache hit rate
+      - record: llm:cache:hit_rate
+        expr: |
+          sum(rate(llm_cache_hits[5m]))
+          /
+          (sum(rate(llm_cache_hits[5m])) + sum(rate(llm_cache_misses[5m])))
+
+      # Cache hit rate by type
+      - record: llm:cache:hit_rate:by_type
+        expr: |
+          sum(rate(llm_cache_hits[5m])) by (cache_type)
+          /
+          (sum(rate(llm_cache_hits[5m])) by (cache_type) + sum(rate(llm_cache_misses[5m])) by (cache_type))
+
+      # Cache miss rate
+      - record: llm:cache:miss_rate
+        expr: |
+          sum(rate(llm_cache_misses[5m]))
+          /
+          (sum(rate(llm_cache_hits[5m])) + sum(rate(llm_cache_misses[5m])))
+
+  # SLO recording rules
+  - name: llm_slo
+    interval: 30s
+    rules:
+      # Availability SLO (30-day)
+      - record: llm:slo:availability:30d
+        expr: |
+          sum(rate(llm_requests_total{status="success"}[30d]))
+          /
+          sum(rate(llm_requests_total[30d]))
+
+      # Availability SLO (7-day)
+      - record: llm:slo:availability:7d
+        expr: |
+          sum(rate(llm_requests_total{status="success"}[7d]))
+          /
+          sum(rate(llm_requests_total[7d]))
+
+      # Latency SLO compliance (P95 < 5s)
+      - record: llm:slo:latency:compliance
+        expr: |
+          (
+            histogram_quantile(0.95,
+              sum(rate(llm_requests_duration_bucket[7d])) by (le)
+            ) < 5000
+          ) OR on() vector(0)
+
+      # Error budget remaining (30-day, 99.9% target)
+      - record: llm:slo:error_budget:remaining:30d
+        expr: |
+          1 - (
+            (1 - (sum(rate(llm_requests_total{status="success"}[30d])) / sum(rate(llm_requests_total[30d]))))
+            /
+            (1 - 0.999)
+          )
+
+      # Error budget burn rate (1-hour window)
+      - record: llm:slo:error_budget:burn_rate:1h
+        expr: |
+          (1 - (sum(rate(llm_requests_total{status="success"}[1h])) / sum(rate(llm_requests_total[1h]))))
+          /
+          (1 - 0.999)
+
+      # Error budget burn rate (6-hour window)
+      - record: llm:slo:error_budget:burn_rate:6h
+        expr: |
+          (1 - (sum(rate(llm_requests_total{status="success"}[6h])) / sum(rate(llm_requests_total[6h]))))
+          /
+          (1 - 0.999)
+
+  # System health recording rules
+  - name: llm_system
+    interval: 30s
+    rules:
+      # Active connection ratio
+      - record: llm:system:connection_utilization
+        expr: |
+          sum(llm_connections_active)
+          /
+          sum(llm_connections_max)
+
+      # Queue depth rate of change
+      - record: llm:system:queue_growth_rate
+        expr: |
+          rate(llm_queue_depth[5m])
+
+      # Memory usage percentage
+      - record: llm:system:memory_usage_percent
+        expr: |
+          (llm_system_memory_usage / llm_system_memory_limit) * 100
+
+  # Business metrics recording rules
+  - name: llm_business
+    interval: 1m
+    rules:
+      # Total requests per hour
+      - record: llm:business:requests_per_hour
+        expr: |
+          sum(rate(llm_requests_total[1h])) * 3600
+
+      # Total tokens per hour
+      - record: llm:business:tokens_per_hour
+        expr: |
+          sum(rate(llm_tokens_total[1h])) * 3600
+
+      # Cost efficiency (cost per 1M tokens)
+      - record: llm:business:cost_per_1m_tokens
+        expr: |
+          (sum(rate(llm_cost_total[24h])) * 1000000)
+          /
+          sum(rate(llm_tokens_total{token_type="total"}[24h]))
+
+      # Provider market share (by request volume)
+      - record: llm:business:provider_share:requests
+        expr: |
+          sum(rate(llm_requests_total[24h])) by (provider)
+          /
+          sum(rate(llm_requests_total[24h]))
+
+      # Provider market share (by token volume)
+      - record: llm:business:provider_share:tokens
+        expr: |
+          sum(rate(llm_tokens_total[24h])) by (provider)
+          /
+          sum(rate(llm_tokens_total[24h]))

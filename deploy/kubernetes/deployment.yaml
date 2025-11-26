@@ -1,0 +1,317 @@
+---
+# ==============================================================================
+# LLM-Simulator Kubernetes Deployment
+# ==============================================================================
+# This manifest deploys LLM-Simulator as a scalable Deployment with:
+# - Horizontal auto-scaling
+# - Resource limits and requests
+# - Health checks and readiness probes
+# - Rolling update strategy
+# - Pod disruption budget
+# ==============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-simulator
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+    component: simulation-engine
+    version: v1.0.0
+    part-of: llm-devops-platform
+spec:
+  replicas: 3
+  revisionHistoryLimit: 10
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  selector:
+    matchLabels:
+      app: llm-simulator
+      component: simulation-engine
+
+  template:
+    metadata:
+      labels:
+        app: llm-simulator
+        component: simulation-engine
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+        sidecar.istio.io/inject: "true"
+    spec:
+      serviceAccountName: llm-simulator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Init container to validate configuration
+      initContainers:
+        - name: config-validator
+          image: llm-simulator:1.0.0
+          imagePullPolicy: IfNotPresent
+          command: ["/app/llm-simulator", "validate", "--config", "/app/config/simulator.yaml"]
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+
+      containers:
+        - name: llm-simulator
+          image: llm-simulator:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+
+          env:
+            - name: LLM_SIM_HOST
+              value: "0.0.0.0"
+            - name: LLM_SIM_PORT
+              value: "8080"
+            - name: LLM_SIM_METRICS_PORT
+              value: "9090"
+            - name: LLM_SIM_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: llm-simulator-config
+                  key: log_level
+            - name: LLM_SIM_LOG_FORMAT
+              value: "json"
+            - name: LLM_SIM_CONFIG
+              value: "/app/config/simulator.yaml"
+            - name: LLM_SIM_WORKER_THREADS
+              value: "0"  # Auto-detect from CPU limits
+            - name: RUST_LOG
+              value: "info,llm_simulator=debug"
+            - name: RUST_BACKTRACE
+              value: "1"
+            - name: OTEL_SERVICE_NAME
+              value: "llm-simulator"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.observability:4317"
+            - name: OTEL_TRACES_SAMPLER
+              value: "parentbased_traceidratio"
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: "1.0"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "2Gi"
+            limits:
+              cpu: "4000m"
+              memory: "8Gi"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 12  # 60 seconds total
+
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+            - name: profiles
+              mountPath: /app/profiles
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config
+          configMap:
+            name: llm-simulator-config
+            defaultMode: 0444
+        - name: profiles
+          configMap:
+            name: llm-simulator-profiles
+            defaultMode: 0444
+        - name: data
+          emptyDir:
+            sizeLimit: 10Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - llm-simulator
+                topologyKey: kubernetes.io/hostname
+
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: llm-simulator
+
+      terminationGracePeriodSeconds: 60
+
+---
+# ==============================================================================
+# Service Account
+# ==============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: llm-simulator
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+
+---
+# ==============================================================================
+# Pod Disruption Budget
+# ==============================================================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: llm-simulator-pdb
+  namespace: llm-devops
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: llm-simulator
+      component: simulation-engine
+
+---
+# ==============================================================================
+# Network Policy
+# ==============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-simulator-netpol
+  namespace: llm-devops
+spec:
+  podSelector:
+    matchLabels:
+      app: llm-simulator
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: llm-devops
+        - podSelector:
+            matchLabels:
+              app: llm-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: observability
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: observability
+      ports:
+        - protocol: TCP
+          port: 4317  # OTLP
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 53   # DNS
+        - protocol: UDP
+          port: 53

@@ -1,0 +1,468 @@
+# ==============================================================================
+# LLM-Simulator Helm Chart Values
+# ==============================================================================
+# Default values for llm-simulator.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Global Settings
+# ------------------------------------------------------------------------------
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+
+# ------------------------------------------------------------------------------
+# Deployment Configuration
+# ------------------------------------------------------------------------------
+deploymentType: deployment  # deployment, statefulset, or daemonset
+
+replicaCount: 3
+
+image:
+  registry: docker.io
+  repository: llm-devops/llm-simulator
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# ------------------------------------------------------------------------------
+# Service Account
+# ------------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automountServiceAccountToken: true
+
+# ------------------------------------------------------------------------------
+# Pod Security
+# ------------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# ------------------------------------------------------------------------------
+# Service Configuration
+# ------------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: http
+  metricsPort: 9090
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+
+# ------------------------------------------------------------------------------
+# Ingress Configuration
+# ------------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: llm-simulator.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: llm-simulator-tls
+      hosts:
+        - llm-simulator.example.com
+
+# ------------------------------------------------------------------------------
+# Resource Limits
+# ------------------------------------------------------------------------------
+resources:
+  limits:
+    cpu: 4000m
+    memory: 8Gi
+  requests:
+    cpu: 1000m
+    memory: 2Gi
+
+# ------------------------------------------------------------------------------
+# Autoscaling
+# ------------------------------------------------------------------------------
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 4
+          periodSeconds: 30
+      selectPolicy: Max
+
+# ------------------------------------------------------------------------------
+# Vertical Pod Autoscaler
+# ------------------------------------------------------------------------------
+vpa:
+  enabled: false
+  updateMode: "Auto"  # Off, Initial, Recreate, Auto
+  minAllowed:
+    cpu: 500m
+    memory: 1Gi
+  maxAllowed:
+    cpu: 8000m
+    memory: 16Gi
+
+# ------------------------------------------------------------------------------
+# Pod Disruption Budget
+# ------------------------------------------------------------------------------
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# ------------------------------------------------------------------------------
+# Health Checks
+# ------------------------------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+startupProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 0
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 12
+
+# ------------------------------------------------------------------------------
+# Application Configuration
+# ------------------------------------------------------------------------------
+config:
+  # Server settings
+  server:
+    host: "0.0.0.0"
+    port: 8080
+    maxConnections: 10000
+    requestTimeoutSecs: 300
+    keepaliveTimeoutSecs: 75
+    shutdownTimeoutSecs: 30
+
+  # Simulation settings
+  simulation:
+    maxConcurrentSessions: 1000
+    sessionTimeoutSecs: 3600
+    persistSessions: false
+    workerThreads: 0  # Auto-detect
+    blockingThreads: 512
+    taskQueueSize: 10000
+    backpressure: "reject"
+
+  # Telemetry
+  telemetry:
+    enabled: true
+    serviceName: "llm-simulator"
+    logLevel: "info"
+    logFormat: "json"
+    metricsEnabled: true
+    metricsExporter: "prometheus"
+    tracingEnabled: false
+    tracingExporter: "otlp"
+    tracingSamplingRate: 1.0
+
+  # Features
+  features:
+    streaming: true
+    functionCalling: false
+    vision: false
+    embeddings: false
+    caching: false
+
+# ------------------------------------------------------------------------------
+# Provider Profiles
+# ------------------------------------------------------------------------------
+profiles:
+  gpt4Turbo:
+    enabled: true
+    name: "GPT-4 Turbo"
+    provider: "openai"
+    model: "gpt-4-turbo"
+    latency:
+      ttft:
+        type: "log_normal"
+        p50_ms: 800.0
+        p99_ms: 2500.0
+      itl:
+        type: "normal"
+        mean_ms: 20.0
+        std_dev_ms: 5.0
+    cost:
+      input_tokens_per_million: 10.0
+      output_tokens_per_million: 30.0
+
+  claude3Opus:
+    enabled: true
+    name: "Claude 3 Opus"
+    provider: "anthropic"
+    model: "claude-3-opus"
+    latency:
+      ttft:
+        type: "log_normal"
+        p50_ms: 1200.0
+        p99_ms: 3000.0
+      itl:
+        type: "normal"
+        mean_ms: 25.0
+        std_dev_ms: 6.0
+    cost:
+      input_tokens_per_million: 15.0
+      output_tokens_per_million: 75.0
+
+  gpt35Turbo:
+    enabled: true
+    name: "GPT-3.5 Turbo"
+    provider: "openai"
+    model: "gpt-3.5-turbo"
+    latency:
+      ttft:
+        type: "bimodal"
+        fast_mean_ms: 100.0
+        fast_std_ms: 20.0
+        slow_mean_ms: 500.0
+        slow_std_ms: 100.0
+        fast_probability: 0.9
+      itl:
+        type: "normal"
+        mean_ms: 10.0
+        std_dev_ms: 3.0
+    cost:
+      input_tokens_per_million: 0.5
+      output_tokens_per_million: 1.5
+
+# ------------------------------------------------------------------------------
+# Persistence (for StatefulSet)
+# ------------------------------------------------------------------------------
+persistence:
+  enabled: false
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 50Gi
+  annotations: {}
+
+# ------------------------------------------------------------------------------
+# Node Affinity and Tolerations
+# ------------------------------------------------------------------------------
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - llm-simulator
+          topologyKey: kubernetes.io/hostname
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: llm-simulator
+
+# ------------------------------------------------------------------------------
+# Priority Class
+# ------------------------------------------------------------------------------
+priorityClassName: ""
+
+# ------------------------------------------------------------------------------
+# Network Policy
+# ------------------------------------------------------------------------------
+networkPolicy:
+  enabled: false
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: llm-devops
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53
+
+# ------------------------------------------------------------------------------
+# Service Monitor (Prometheus Operator)
+# ------------------------------------------------------------------------------
+serviceMonitor:
+  enabled: false
+  namespace: ""
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  honorLabels: true
+
+# ------------------------------------------------------------------------------
+# Pod Monitor (Prometheus Operator)
+# ------------------------------------------------------------------------------
+podMonitor:
+  enabled: false
+  namespace: ""
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+
+# ------------------------------------------------------------------------------
+# Observability Integration
+# ------------------------------------------------------------------------------
+observability:
+  otelCollector:
+    enabled: false
+    endpoint: "http://otel-collector.observability:4317"
+
+  jaeger:
+    enabled: false
+    endpoint: "http://jaeger-collector.observability:14268"
+
+  prometheus:
+    enabled: true
+
+  grafana:
+    enabled: false
+    dashboards:
+      enabled: false
+
+# ------------------------------------------------------------------------------
+# Extra Environment Variables
+# ------------------------------------------------------------------------------
+extraEnv: []
+# - name: CUSTOM_VAR
+#   value: "custom-value"
+
+extraEnvFrom: []
+# - secretRef:
+#     name: extra-secrets
+
+# ------------------------------------------------------------------------------
+# Extra Volumes
+# ------------------------------------------------------------------------------
+extraVolumes: []
+# - name: extra-config
+#   configMap:
+#     name: extra-config
+
+extraVolumeMounts: []
+# - name: extra-config
+#   mountPath: /extra/config
+#   readOnly: true
+
+# ------------------------------------------------------------------------------
+# Init Containers
+# ------------------------------------------------------------------------------
+initContainers: []
+
+# ------------------------------------------------------------------------------
+# Sidecar Containers
+# ------------------------------------------------------------------------------
+sidecars: []
+
+# ------------------------------------------------------------------------------
+# Pod Annotations
+# ------------------------------------------------------------------------------
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+  prometheus.io/path: "/metrics"
+
+# ------------------------------------------------------------------------------
+# Pod Labels
+# ------------------------------------------------------------------------------
+podLabels: {}
+
+# ------------------------------------------------------------------------------
+# Termination Grace Period
+# ------------------------------------------------------------------------------
+terminationGracePeriodSeconds: 60
+
+# ------------------------------------------------------------------------------
+# Update Strategy
+# ------------------------------------------------------------------------------
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# ------------------------------------------------------------------------------
+# Revision History Limit
+# ------------------------------------------------------------------------------
+revisionHistoryLimit: 10

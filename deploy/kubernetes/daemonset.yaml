@@ -1,0 +1,235 @@
+---
+# ==============================================================================
+# LLM-Simulator DaemonSet
+# ==============================================================================
+# Use this deployment pattern for:
+# - Node-local caching and response generation
+# - Minimizing network latency (runs on every node)
+# - Edge computing scenarios
+# - Local development with Kubernetes
+# ==============================================================================
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: llm-simulator-daemon
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+    component: simulation-engine
+    deployment-type: daemon
+spec:
+  selector:
+    matchLabels:
+      app: llm-simulator
+      component: simulation-engine
+      deployment-type: daemon
+
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+
+  template:
+    metadata:
+      labels:
+        app: llm-simulator
+        component: simulation-engine
+        deployment-type: daemon
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: llm-simulator
+      hostNetwork: false  # Set to true for node-level networking
+      dnsPolicy: ClusterFirst
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      initContainers:
+        - name: config-validator
+          image: llm-simulator:1.0.0
+          imagePullPolicy: IfNotPresent
+          command: ["/app/llm-simulator", "validate", "--config", "/app/config/simulator.yaml"]
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+
+      containers:
+        - name: llm-simulator
+          image: llm-simulator:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+              hostPort: 8080  # Optional: expose on host
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+              hostPort: 9090  # Optional: expose on host
+
+          env:
+            - name: LLM_SIM_HOST
+              value: "0.0.0.0"
+            - name: LLM_SIM_PORT
+              value: "8080"
+            - name: LLM_SIM_METRICS_PORT
+              value: "9090"
+            - name: LLM_SIM_LOG_LEVEL
+              value: "info"
+            - name: LLM_SIM_LOG_FORMAT
+              value: "json"
+            - name: LLM_SIM_CONFIG
+              value: "/app/config/simulator.yaml"
+            - name: LLM_SIM_WORKER_THREADS
+              value: "0"  # Auto-detect from node
+            # Use node name as seed for reproducibility
+            - name: LLM_SIM_SEED_PREFIX
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: OTEL_SERVICE_NAME
+              value: "llm-simulator-daemon"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.observability:4317"
+            - name: RUST_LOG
+              value: "info,llm_simulator=debug"
+            - name: RUST_BACKTRACE
+              value: "1"
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+            - name: profiles
+              mountPath: /app/profiles
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
+            # Optional: Mount host path for shared cache
+            # - name: host-cache
+            #   mountPath: /app/cache
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: config
+          configMap:
+            name: llm-simulator-config
+            defaultMode: 0444
+        - name: profiles
+          configMap:
+            name: llm-simulator-profiles
+            defaultMode: 0444
+        - name: data
+          emptyDir:
+            sizeLimit: 10Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+        # Optional: Host path for shared node-level cache
+        # - name: host-cache
+        #   hostPath:
+        #     path: /var/lib/llm-simulator/cache
+        #     type: DirectoryOrCreate
+
+      # Node selector - only schedule on specific nodes
+      nodeSelector:
+        workload-type: llm-simulation
+        # kubernetes.io/arch: amd64
+
+      # Tolerations for node taints
+      tolerations:
+        - key: node-role.kubernetes.io/simulator
+          operator: Exists
+          effect: NoSchedule
+        - key: workload-type
+          operator: Equal
+          value: llm-simulation
+          effect: NoSchedule
+
+      terminationGracePeriodSeconds: 30
+
+      # Priority class for scheduling
+      priorityClassName: system-node-critical  # or custom priority class

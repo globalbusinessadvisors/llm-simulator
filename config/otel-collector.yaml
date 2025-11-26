@@ -1,0 +1,275 @@
+# OpenTelemetry Collector Configuration
+# Version: 1.0
+# Purpose: Receive, process, and export telemetry data
+
+receivers:
+  # OTLP receiver for traces, metrics, and logs
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 64
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - "http://*"
+            - "https://*"
+
+  # Prometheus scraper (optional)
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'otel-collector'
+          scrape_interval: 10s
+          static_configs:
+            - targets: ['localhost:8888']
+
+processors:
+  # Batch processor - reduces overhead
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  # Memory limiter - prevents OOM
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Resource processor - add/modify resource attributes
+  resource:
+    attributes:
+      - key: service.name
+        value: llm-simulator
+        action: upsert
+      - key: deployment.environment
+        from_attribute: environment
+        action: upsert
+      - key: service.version
+        from_attribute: version
+        action: upsert
+
+  # Attributes processor - modify span/metric attributes
+  attributes:
+    actions:
+      # Add environment from env var
+      - key: environment
+        value: ${env:ENVIRONMENT}
+        action: insert
+      # Remove sensitive data
+      - key: http.request.header.authorization
+        action: delete
+      - key: http.request.header.cookie
+        action: delete
+
+  # Span processor - modify spans
+  span:
+    name:
+      # Rename spans
+      from_attributes: ["http.method", "http.route"]
+      separator: " "
+
+  # Filter processor - drop unwanted data
+  filter:
+    metrics:
+      exclude:
+        match_type: regexp
+        metric_names:
+          - ^go_.*
+          - ^process_.*
+    traces:
+      span:
+        # Drop health check spans
+        - 'attributes["http.target"] == "/health"'
+        - 'attributes["http.target"] == "/metrics"'
+
+  # Probabilistic sampler - reduce trace volume
+  probabilistic_sampler:
+    sampling_percentage: 10  # 10% sampling in production
+
+  # Tail sampling - intelligent sampling based on span properties
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 100
+    expected_new_traces_per_sec: 10
+    policies:
+      # Always sample errors
+      - name: error-sample
+        type: status_code
+        status_code:
+          status_codes:
+            - ERROR
+      # Always sample slow requests
+      - name: latency-sample
+        type: latency
+        latency:
+          threshold_ms: 5000
+      # Sample 10% of normal requests
+      - name: probabilistic-sample
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  # K8s attributes processor (if running on K8s)
+  k8sattributes:
+    auth_type: "serviceAccount"
+    passthrough: false
+    extract:
+      metadata:
+        - k8s.namespace.name
+        - k8s.deployment.name
+        - k8s.pod.name
+        - k8s.pod.uid
+        - k8s.node.name
+      labels:
+        - tag_name: app.label.component
+          key: app.kubernetes.io/component
+          from: pod
+
+exporters:
+  # OTLP exporter for traces (Jaeger)
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # OTLP exporter for Grafana Tempo
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Prometheus exporter for metrics
+  prometheus:
+    endpoint: "0.0.0.0:9464"
+    namespace: llm
+    const_labels:
+      environment: ${env:ENVIRONMENT}
+    send_timestamps: true
+    metric_expiration: 5m
+    enable_open_metrics: true
+
+  # Prometheus remote write
+  prometheusremotewrite:
+    endpoint: "http://prometheus:9090/api/v1/write"
+    tls:
+      insecure: true
+
+  # Loki exporter for logs
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    tenant_id: "llm-simulator"
+    labels:
+      resource:
+        service.name: "service_name"
+        service.namespace: "service_namespace"
+      attributes:
+        level: ""
+        traceID: ""
+    format: json
+
+  # File exporter for debugging
+  file:
+    path: /var/log/otel-collector/output.json
+
+  # Logging exporter for debugging
+  logging:
+    loglevel: info
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+  # Datadog exporter (optional)
+  datadog:
+    api:
+      key: ${env:DD_API_KEY}
+      site: datadoghq.com
+    traces:
+      span_name_as_resource_name: true
+      trace_buffer: 500
+    metrics:
+      endpoint: https://api.datadoghq.com
+      namespace: llm_simulator
+    logs:
+      enabled: true
+
+  # New Relic exporter (optional)
+  otlp/newrelic:
+    endpoint: otlp.nr-data.net:4317
+    headers:
+      api-key: ${env:NEW_RELIC_LICENSE_KEY}
+
+extensions:
+  # Health check endpoint
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+  # Pprof for profiling
+  pprof:
+    endpoint: 0.0.0.0:1777
+
+  # zPages for diagnostics
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+  # Memory ballast for stability
+  memory_ballast:
+    size_mib: 256
+
+service:
+  extensions: [health_check, pprof, zpages, memory_ballast]
+
+  pipelines:
+    # Traces pipeline
+    traces:
+      receivers: [otlp]
+      processors:
+        - memory_limiter
+        - resource
+        - attributes
+        - span
+        - filter
+        - tail_sampling
+        - batch
+      exporters:
+        - otlp/jaeger
+        - otlp/tempo
+        - logging
+
+    # Metrics pipeline
+    metrics:
+      receivers: [otlp, prometheus]
+      processors:
+        - memory_limiter
+        - resource
+        - filter
+        - batch
+      exporters:
+        - prometheus
+        - prometheusremotewrite
+        - logging
+
+    # Logs pipeline
+    logs:
+      receivers: [otlp]
+      processors:
+        - memory_limiter
+        - resource
+        - attributes
+        - batch
+      exporters:
+        - loki
+        - logging
+
+  # Telemetry configuration
+  telemetry:
+    logs:
+      level: info
+      encoding: json
+      output_paths:
+        - stdout
+        - /var/log/otel-collector/collector.log
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888

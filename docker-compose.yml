@@ -1,0 +1,271 @@
+version: '3.9'
+
+# ==============================================================================
+# LLM-Simulator Docker Compose Configuration
+# ==============================================================================
+# Usage:
+#   Development:   docker-compose up
+#   Production:    docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+#   Testing:       docker-compose -f docker-compose.yml -f docker-compose.test.yml up
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # LLM Simulator Service
+  # ----------------------------------------------------------------------------
+  llm-simulator:
+    image: llm-simulator:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        - RUST_VERSION=1.75
+    container_name: llm-simulator
+    hostname: llm-simulator
+    restart: unless-stopped
+
+    ports:
+      - "${LLM_SIM_PORT:-8080}:8080"      # HTTP API
+      - "${LLM_SIM_METRICS_PORT:-9090}:9090"  # Metrics endpoint
+
+    environment:
+      # Server configuration
+      - LLM_SIM_HOST=0.0.0.0
+      - LLM_SIM_PORT=8080
+      - LLM_SIM_METRICS_PORT=9090
+      - LLM_SIM_LOG_LEVEL=${LOG_LEVEL:-info}
+      - LLM_SIM_LOG_FORMAT=json
+
+      # Simulation settings
+      - LLM_SIM_MAX_CONNECTIONS=${MAX_CONNECTIONS:-10000}
+      - LLM_SIM_REQUEST_TIMEOUT_SECS=${REQUEST_TIMEOUT:-300}
+      - LLM_SIM_WORKER_THREADS=${WORKER_THREADS:-0}
+
+      # Telemetry
+      - OTEL_SERVICE_NAME=llm-simulator
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_TRACES_SAMPLER=parentbased_traceidratio
+      - OTEL_TRACES_SAMPLER_ARG=${TRACE_SAMPLING_RATE:-1.0}
+
+      # Rust runtime
+      - RUST_LOG=${RUST_LOG:-info}
+      - RUST_BACKTRACE=${RUST_BACKTRACE:-1}
+
+    volumes:
+      - ./config:/app/config:ro
+      - ./profiles:/app/profiles:ro
+      - simulator-data:/app/data
+      - simulator-logs:/app/logs
+
+    networks:
+      - simulator-network
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '2'
+          memory: 2G
+
+    labels:
+      - "com.llm-devops.service=llm-simulator"
+      - "com.llm-devops.version=${VERSION:-latest}"
+      - "prometheus.scrape=true"
+      - "prometheus.port=9090"
+      - "prometheus.path=/metrics"
+
+  # ----------------------------------------------------------------------------
+  # Prometheus (Metrics Collection)
+  # ----------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: prometheus
+    restart: unless-stopped
+
+    ports:
+      - "${PROMETHEUS_PORT:-9091}:9090"
+
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+    networks:
+      - simulator-network
+
+    depends_on:
+      - llm-simulator
+
+    labels:
+      - "com.llm-devops.service=prometheus"
+
+  # ----------------------------------------------------------------------------
+  # Grafana (Metrics Visualization)
+  # ----------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: grafana
+    restart: unless-stopped
+
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+
+    volumes:
+      - ./deploy/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./deploy/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - grafana-data:/var/lib/grafana
+
+    networks:
+      - simulator-network
+
+    depends_on:
+      - prometheus
+
+    labels:
+      - "com.llm-devops.service=grafana"
+
+  # ----------------------------------------------------------------------------
+  # OpenTelemetry Collector (Optional)
+  # ----------------------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: otel-collector
+    restart: unless-stopped
+
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Metrics endpoint
+      - "13133:13133" # Health check
+
+    volumes:
+      - ./deploy/otel-collector/config.yaml:/etc/otel/config.yaml:ro
+
+    command: ["--config=/etc/otel/config.yaml"]
+
+    networks:
+      - simulator-network
+
+    depends_on:
+      - llm-simulator
+
+    labels:
+      - "com.llm-devops.service=otel-collector"
+
+    profiles:
+      - observability
+
+  # ----------------------------------------------------------------------------
+  # Jaeger (Distributed Tracing - Optional)
+  # ----------------------------------------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: jaeger
+    restart: unless-stopped
+
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # Jaeger collector HTTP
+      - "14250:14250"  # Jaeger collector gRPC
+
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - SPAN_STORAGE_TYPE=badger
+      - BADGER_EPHEMERAL=false
+      - BADGER_DIRECTORY_VALUE=/badger/data
+      - BADGER_DIRECTORY_KEY=/badger/key
+
+    volumes:
+      - jaeger-data:/badger
+
+    networks:
+      - simulator-network
+
+    profiles:
+      - observability
+
+    labels:
+      - "com.llm-devops.service=jaeger"
+
+  # ----------------------------------------------------------------------------
+  # Redis (Session Storage - Optional)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis
+    restart: unless-stopped
+
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+
+    volumes:
+      - redis-data:/data
+
+    networks:
+      - simulator-network
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+    profiles:
+      - cache
+
+    labels:
+      - "com.llm-devops.service=redis"
+
+# ==============================================================================
+# Networks
+# ==============================================================================
+networks:
+  simulator-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+volumes:
+  simulator-data:
+    driver: local
+  simulator-logs:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  jaeger-data:
+    driver: local
+  redis-data:
+    driver: local

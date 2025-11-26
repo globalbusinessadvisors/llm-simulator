@@ -1,0 +1,87 @@
+# LLM-Simulator Default Configuration
+# Enterprise-grade offline LLM API simulator
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  max_concurrent_requests: 10000
+  request_timeout: "300s"
+  cors_enabled: true
+  cors_origins:
+    - "*"
+  request_logging: true
+  worker_threads: 0
+
+latency:
+  enabled: true
+  multiplier: 1.0
+  default_profile: "standard"
+  profiles:
+    fast:
+      ttft:
+        type: normal
+        mean_ms: 50.0
+        std_dev_ms: 10.0
+      itl:
+        type: normal
+        mean_ms: 15.0
+        std_dev_ms: 3.0
+      overhead: 5
+    standard:
+      ttft:
+        type: normal
+        mean_ms: 200.0
+        std_dev_ms: 50.0
+      itl:
+        type: normal
+        mean_ms: 30.0
+        std_dev_ms: 8.0
+      overhead: 10
+    slow:
+      ttft:
+        type: normal
+        mean_ms: 500.0
+        std_dev_ms: 100.0
+      itl:
+        type: normal
+        mean_ms: 60.0
+        std_dev_ms: 15.0
+      overhead: 20
+    instant:
+      ttft:
+        type: fixed
+        value_ms: 0.0
+      itl:
+        type: fixed
+        value_ms: 0.0
+      overhead: 0
+
+chaos:
+  enabled: false
+  global_probability: 1.0
+  errors: []
+  circuit_breaker:
+    enabled: false
+    failure_threshold: 5
+    failure_window_secs: 60
+    recovery_timeout_secs: 30
+    success_threshold: 3
+    per_model: true
+  rate_limiting:
+    enabled: false
+    requests_per_minute: 1000
+    tokens_per_minute: 100000
+    burst_multiplier: 1.5
+
+telemetry:
+  enabled: true
+  log_level: "info"
+  json_logs: false
+  metrics_path: "/metrics"
+  service_name: "llm-simulator"
+  trace_requests: true
+
+default_provider: "openai"
+
+# Model configurations are built-in by default
+# Override specific models here if needed

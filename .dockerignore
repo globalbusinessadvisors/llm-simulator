@@ -1,0 +1,90 @@
+# Git and version control
+.git
+.gitignore
+.gitattributes
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Documentation
+*.md
+docs/
+examples/
+
+# Development files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Build artifacts
+target/
+dist/
+build/
+*.so
+*.dylib
+*.dll
+
+# Dependencies (will be rebuilt)
+node_modules/
+vendor/
+
+# Test files
+tests/
+test/
+*.test
+coverage/
+.coverage
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+
+# Local configuration overrides
+*.local.yaml
+*.local.yml
+simulator.local.*
+
+# Data directories
+data/
+tmp/
+.tmp/
+
+# IDE
+*.iml
+.project
+.classpath
+.settings/
+
+# Rust specific
+Cargo.lock
+*.rlib
+*.pdb
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+
+# Kubernetes local
+*.kubeconfig

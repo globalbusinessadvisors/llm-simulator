@@ -1,0 +1,11 @@
+# Prometheus configuration for LLM-Simulator
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'llm-simulator'
+    static_configs:
+      - targets: ['llm-simulator:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 5s

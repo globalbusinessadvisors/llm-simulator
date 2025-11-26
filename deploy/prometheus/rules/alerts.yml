@@ -1,0 +1,352 @@
+# Prometheus Alerting Rules for LLM-Simulator
+# ==============================================================================
+
+groups:
+  # ============================================================================
+  # Availability Alerts
+  # ============================================================================
+  - name: llm_simulator_availability
+    interval: 30s
+    rules:
+      - alert: LLMSimulatorDown
+        expr: up{job="llm-simulator"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator instance is down"
+          description: "LLM-Simulator instance {{ $labels.kubernetes_pod_name }} in namespace {{ $labels.kubernetes_namespace }} has been down for more than 2 minutes."
+
+      - alert: LLMSimulatorHighRestartRate
+        expr: rate(kube_pod_container_status_restarts_total{container="llm-simulator"}[15m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator pod restart rate is high"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} is restarting frequently ({{ $value }} restarts/sec over 15m)."
+
+      - alert: LLMSimulatorPodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total{container="llm-simulator"}[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: critical
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator pod is crash looping"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} is crash looping ({{ $value }} restarts/sec)."
+
+      - alert: LLMSimulatorInsufficientReplicas
+        expr: |
+          sum(up{job="llm-simulator"}) by (kubernetes_namespace)
+          <
+          kube_deployment_spec_replicas{deployment="llm-simulator"} * 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator has insufficient healthy replicas"
+          description: "LLM-Simulator in namespace {{ $labels.kubernetes_namespace }} has only {{ $value }} healthy replicas (less than 80% of desired)."
+
+  # ============================================================================
+  # Performance Alerts
+  # ============================================================================
+  - name: llm_simulator_performance
+    interval: 30s
+    rules:
+      - alert: LLMSimulatorHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(llm_simulator_request_duration_seconds_bucket[5m])) by (le, kubernetes_namespace)
+          ) > 3
+        for: 5m
+        labels:
+          severity: warning
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator P95 latency is high"
+          description: "LLM-Simulator in {{ $labels.kubernetes_namespace }} has P95 latency of {{ $value }}s (threshold: 3s) over the last 5 minutes."
+
+      - alert: LLMSimulatorVeryHighLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(llm_simulator_request_duration_seconds_bucket[5m])) by (le, kubernetes_namespace)
+          ) > 5
+        for: 5m
+        labels:
+          severity: critical
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator P99 latency is critically high"
+          description: "LLM-Simulator in {{ $labels.kubernetes_namespace }} has P99 latency of {{ $value }}s (threshold: 5s)."
+
+      - alert: LLMSimulatorHighTTFT
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(llm_simulator_ttft_seconds_bucket[5m])) by (le, kubernetes_namespace)
+          ) > 2.5
+        for: 5m
+        labels:
+          severity: warning
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator Time-to-First-Token is high"
+          description: "LLM-Simulator TTFT P95 in {{ $labels.kubernetes_namespace }} is {{ $value }}s (threshold: 2.5s)."
+
+  # ============================================================================
+  # Error Rate Alerts
+  # ============================================================================
+  - name: llm_simulator_errors
+    interval: 30s
+    rules:
+      - alert: LLMSimulatorHighErrorRate
+        expr: |
+          sum(rate(llm_simulator_requests_total{status=~"5.."}[5m])) by (kubernetes_namespace)
+          /
+          sum(rate(llm_simulator_requests_total[5m])) by (kubernetes_namespace)
+          > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator error rate is elevated"
+          description: "LLM-Simulator in {{ $labels.kubernetes_namespace }} has {{ $value | humanizePercentage }} error rate (threshold: 1%)."
+
+      - alert: LLMSimulatorCriticalErrorRate
+        expr: |
+          sum(rate(llm_simulator_requests_total{status=~"5.."}[5m])) by (kubernetes_namespace)
+          /
+          sum(rate(llm_simulator_requests_total[5m])) by (kubernetes_namespace)
+          > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator error rate is critical"
+          description: "LLM-Simulator in {{ $labels.kubernetes_namespace }} has {{ $value | humanizePercentage }} error rate (threshold: 5%)."
+
+      - alert: LLMSimulatorNoRequests
+        expr: |
+          sum(rate(llm_simulator_requests_total[5m])) by (kubernetes_namespace) == 0
+        for: 10m
+        labels:
+          severity: warning
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator is receiving no requests"
+          description: "LLM-Simulator in {{ $labels.kubernetes_namespace }} has received no requests for 10 minutes."
+
+  # ============================================================================
+  # Resource Alerts
+  # ============================================================================
+  - name: llm_simulator_resources
+    interval: 30s
+    rules:
+      - alert: LLMSimulatorHighCPUUsage
+        expr: |
+          sum(rate(container_cpu_usage_seconds_total{container="llm-simulator"}[5m])) by (pod, namespace)
+          /
+          sum(container_spec_cpu_quota{container="llm-simulator"} / container_spec_cpu_period{container="llm-simulator"}) by (pod, namespace)
+          > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator CPU usage is high"
+          description: "Pod {{ $labels.pod }} in {{ $labels.namespace }} is using {{ $value | humanizePercentage }} of CPU limit."
+
+      - alert: LLMSimulatorHighMemoryUsage
+        expr: |
+          sum(container_memory_working_set_bytes{container="llm-simulator"}) by (pod, namespace)
+          /
+          sum(container_spec_memory_limit_bytes{container="llm-simulator"}) by (pod, namespace)
+          > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator memory usage is high"
+          description: "Pod {{ $labels.pod }} in {{ $labels.namespace }} is using {{ $value | humanizePercentage }} of memory limit."
+
+      - alert: LLMSimulatorOOMKilled
+        expr: |
+          sum(kube_pod_container_status_terminated_reason{reason="OOMKilled", container="llm-simulator"}) by (pod, namespace) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator pod was OOM killed"
+          description: "Pod {{ $labels.pod }} in {{ $labels.namespace }} was killed due to out-of-memory."
+
+      - alert: LLMSimulatorCPUThrottling
+        expr: |
+          rate(container_cpu_cfs_throttled_seconds_total{container="llm-simulator"}[5m])
+          /
+          rate(container_cpu_cfs_periods_total{container="llm-simulator"}[5m])
+          > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator is experiencing CPU throttling"
+          description: "Pod {{ $labels.pod }} in {{ $labels.namespace }} is being CPU throttled {{ $value | humanizePercentage }} of the time."
+
+  # ============================================================================
+  # Queue and Concurrency Alerts
+  # ============================================================================
+  - name: llm_simulator_queue
+    interval: 30s
+    rules:
+      - alert: LLMSimulatorHighQueueDepth
+        expr: llm_simulator_queue_depth > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator request queue depth is high"
+          description: "LLM-Simulator in {{ $labels.kubernetes_namespace }} has queue depth of {{ $value }} (threshold: 100)."
+
+      - alert: LLMSimulatorQueueFull
+        expr: llm_simulator_queue_depth >= llm_simulator_queue_capacity
+        for: 1m
+        labels:
+          severity: critical
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator request queue is full"
+          description: "LLM-Simulator queue is at capacity ({{ $value }}), requests are being rejected."
+
+      - alert: LLMSimulatorHighConcurrency
+        expr: llm_simulator_active_requests > 5000
+        for: 5m
+        labels:
+          severity: warning
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator has high concurrent requests"
+          description: "LLM-Simulator has {{ $value }} active concurrent requests (threshold: 5000)."
+
+  # ============================================================================
+  # SLO Alerts (Service Level Objectives)
+  # ============================================================================
+  - name: llm_simulator_slo
+    interval: 2m
+    rules:
+      - alert: LLMSimulatorSLOLatencyBreach
+        expr: |
+          (
+            sum(rate(llm_simulator_request_duration_seconds_bucket{le="3"}[5m])) by (kubernetes_namespace)
+            /
+            sum(rate(llm_simulator_request_duration_seconds_count[5m])) by (kubernetes_namespace)
+          ) < 0.95
+        for: 10m
+        labels:
+          severity: warning
+          component: llm-simulator
+          slo: latency
+        annotations:
+          summary: "LLM-Simulator latency SLO breach"
+          description: "Only {{ $value | humanizePercentage }} of requests in {{ $labels.kubernetes_namespace }} completed within 3s (SLO: 95%)."
+
+      - alert: LLMSimulatorSLOAvailabilityBreach
+        expr: |
+          (
+            sum(rate(llm_simulator_requests_total{status!~"5.."}[5m])) by (kubernetes_namespace)
+            /
+            sum(rate(llm_simulator_requests_total[5m])) by (kubernetes_namespace)
+          ) < 0.999
+        for: 5m
+        labels:
+          severity: critical
+          component: llm-simulator
+          slo: availability
+        annotations:
+          summary: "LLM-Simulator availability SLO breach"
+          description: "Availability in {{ $labels.kubernetes_namespace }} is {{ $value | humanizePercentage }} (SLO: 99.9%)."
+
+      - alert: LLMSimulatorErrorBudgetExhausted
+        expr: |
+          (
+            1 - (
+              sum(rate(llm_simulator_requests_total{status!~"5.."}[30d])) by (kubernetes_namespace)
+              /
+              sum(rate(llm_simulator_requests_total[30d])) by (kubernetes_namespace)
+            )
+          ) > 0.001
+        for: 1h
+        labels:
+          severity: warning
+          component: llm-simulator
+          slo: error_budget
+        annotations:
+          summary: "LLM-Simulator error budget is exhausted"
+          description: "30-day error budget in {{ $labels.kubernetes_namespace }} is {{ $value | humanizePercentage }} (budget: 0.1%)."
+
+  # ============================================================================
+  # Capacity Alerts
+  # ============================================================================
+  - name: llm_simulator_capacity
+    interval: 2m
+    rules:
+      - alert: LLMSimulatorNearMaxReplicas
+        expr: |
+          kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler="llm-simulator-hpa"}
+          /
+          kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler="llm-simulator-hpa"}
+          > 0.9
+        for: 15m
+        labels:
+          severity: warning
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator is near max replicas"
+          description: "LLM-Simulator HPA is at {{ $value | humanizePercentage }} of max replicas. Consider increasing max replicas."
+
+      - alert: LLMSimulatorScalingStuck
+        expr: |
+          kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler="llm-simulator-hpa"}
+          ==
+          kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler="llm-simulator-hpa"}
+        for: 30m
+        labels:
+          severity: critical
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator is stuck at max replicas"
+          description: "LLM-Simulator has been at max replicas for 30 minutes. Immediate capacity increase required."
+
+  # ============================================================================
+  # Saturation Alerts
+  # ============================================================================
+  - name: llm_simulator_saturation
+    interval: 1m
+    rules:
+      - alert: LLMSimulatorHighThroughput
+        expr: sum(rate(llm_simulator_requests_total[1m])) by (kubernetes_namespace) > 10000
+        for: 5m
+        labels:
+          severity: info
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator is handling high throughput"
+          description: "LLM-Simulator in {{ $labels.kubernetes_namespace }} is processing {{ $value }} requests/second."
+
+      - alert: LLMSimulatorTokenRateHigh
+        expr: sum(rate(llm_simulator_tokens_generated_total[5m])) by (kubernetes_namespace) > 1000000
+        for: 5m
+        labels:
+          severity: info
+          component: llm-simulator
+        annotations:
+          summary: "LLM-Simulator token generation rate is high"
+          description: "Token generation rate in {{ $labels.kubernetes_namespace }} is {{ $value }} tokens/second."

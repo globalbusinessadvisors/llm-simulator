@@ -1,0 +1,333 @@
+---
+# ==============================================================================
+# LLM-Simulator Ingress - Nginx
+# ==============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: llm-simulator-ingress
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+    component: ingress
+  annotations:
+    # Nginx ingress controller annotations
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+
+    # Connection settings
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+
+    # Rate limiting
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "10"
+
+    # CORS
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+
+    # TLS/SSL
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+
+    # Load balancing
+    nginx.ingress.kubernetes.io/load-balance: "ewma"  # ewma, round_robin
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+
+    # Metrics
+    nginx.ingress.kubernetes.io/enable-metrics: "true"
+spec:
+  ingressClassName: nginx
+
+  tls:
+    - hosts:
+        - llm-simulator.example.com
+        - api.llm-simulator.example.com
+      secretName: llm-simulator-tls
+
+  rules:
+    - host: llm-simulator.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: llm-simulator
+                port:
+                  number: 8080
+
+    - host: api.llm-simulator.example.com
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: llm-simulator
+                port:
+                  number: 8080
+
+---
+# ==============================================================================
+# LLM-Simulator Ingress - AWS ALB
+# ==============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: llm-simulator-alb
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+    component: ingress
+    cloud: aws
+  annotations:
+    # AWS Load Balancer Controller annotations
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+
+    # Health checks
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '30'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '3'
+
+    # SSL/TLS
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID
+
+    # Load balancing
+    alb.ingress.kubernetes.io/load-balancer-name: llm-simulator-alb
+    alb.ingress.kubernetes.io/target-group-attributes: stickiness.enabled=true,stickiness.lb_cookie.duration_seconds=3600
+
+    # Security
+    alb.ingress.kubernetes.io/security-groups: sg-xxxxxxxxx
+    alb.ingress.kubernetes.io/subnets: subnet-xxxxx, subnet-yyyyy
+
+    # Tags
+    alb.ingress.kubernetes.io/tags: Environment=production,Service=llm-simulator
+spec:
+  ingressClassName: alb
+
+  rules:
+    - host: llm-simulator.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: llm-simulator
+                port:
+                  number: 8080
+
+---
+# ==============================================================================
+# LLM-Simulator Ingress - GCP Load Balancer
+# ==============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: llm-simulator-gce
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+    component: ingress
+    cloud: gcp
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: "llm-simulator-ip"
+    networking.gke.io/managed-certificates: "llm-simulator-cert"
+
+    # Backend configuration
+    cloud.google.com/backend-config: '{"default": "llm-simulator-backend-config"}'
+
+    # Session affinity
+    cloud.google.com/session-affinity-mode: "CLIENT_IP"
+    cloud.google.com/session-affinity-ttl: "3600"
+
+    # Health checks
+    cloud.google.com/health-check-path: "/health"
+    cloud.google.com/health-check-interval: "30"
+spec:
+  rules:
+    - host: llm-simulator.example.com
+      http:
+        paths:
+          - path: /*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: llm-simulator
+                port:
+                  number: 8080
+
+---
+# ==============================================================================
+# GCP Managed Certificate
+# ==============================================================================
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: llm-simulator-cert
+  namespace: llm-devops
+spec:
+  domains:
+    - llm-simulator.example.com
+    - api.llm-simulator.example.com
+
+---
+# ==============================================================================
+# GCP Backend Config
+# ==============================================================================
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: llm-simulator-backend-config
+  namespace: llm-devops
+spec:
+  timeoutSec: 300
+  connectionDraining:
+    drainingTimeoutSec: 60
+  sessionAffinity:
+    affinityType: "CLIENT_IP"
+    affinityCookieTtlSec: 3600
+  healthCheck:
+    checkIntervalSec: 30
+    timeoutSec: 5
+    healthyThreshold: 2
+    unhealthyThreshold: 3
+    type: HTTP
+    requestPath: /health
+    port: 8080
+  cdn:
+    enabled: false
+  iap:
+    enabled: false
+
+---
+# ==============================================================================
+# LLM-Simulator Ingress - Azure Application Gateway
+# ==============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: llm-simulator-agic
+  namespace: llm-devops
+  labels:
+    app: llm-simulator
+    component: ingress
+    cloud: azure
+  annotations:
+    kubernetes.io/ingress.class: azure/application-gateway
+    appgw.ingress.kubernetes.io/backend-path-prefix: "/"
+    appgw.ingress.kubernetes.io/connection-draining: "true"
+    appgw.ingress.kubernetes.io/connection-draining-timeout: "60"
+    appgw.ingress.kubernetes.io/cookie-based-affinity: "true"
+    appgw.ingress.kubernetes.io/request-timeout: "300"
+    appgw.ingress.kubernetes.io/ssl-redirect: "true"
+
+    # Health probes
+    appgw.ingress.kubernetes.io/health-probe-path: "/health"
+    appgw.ingress.kubernetes.io/health-probe-interval: "30"
+    appgw.ingress.kubernetes.io/health-probe-timeout: "5"
+    appgw.ingress.kubernetes.io/health-probe-unhealthy-threshold: "3"
+spec:
+  tls:
+    - hosts:
+        - llm-simulator.example.com
+      secretName: llm-simulator-tls-azure
+
+  rules:
+    - host: llm-simulator.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: llm-simulator
+                port:
+                  number: 8080
+
+---
+# ==============================================================================
+# Istio VirtualService (Service Mesh)
+# ==============================================================================
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: llm-simulator-vs
+  namespace: llm-devops
+spec:
+  hosts:
+    - llm-simulator.example.com
+    - llm-simulator.llm-devops.svc.cluster.local
+  gateways:
+    - llm-simulator-gateway
+    - mesh  # Internal mesh traffic
+  http:
+    - match:
+        - uri:
+            prefix: /v1/chat/completions
+      route:
+        - destination:
+            host: llm-simulator.llm-devops.svc.cluster.local
+            port:
+              number: 8080
+          weight: 100
+      retries:
+        attempts: 3
+        perTryTimeout: 30s
+        retryOn: 5xx,reset,connect-failure,refused-stream
+      timeout: 300s
+
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: llm-simulator.llm-devops.svc.cluster.local
+            port:
+              number: 8080
+
+---
+# ==============================================================================
+# Istio Gateway
+# ==============================================================================
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: llm-simulator-gateway
+  namespace: llm-devops
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - llm-simulator.example.com
+      tls:
+        httpsRedirect: true
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      hosts:
+        - llm-simulator.example.com
+      tls:
+        mode: SIMPLE
+        credentialName: llm-simulator-tls-istio
